@@ -1,0 +1,6 @@
+life_os.db
+life_os_backup.db
+app_backup.py
+lifeos.log
+lifeos_error.log
+__pycache__/
