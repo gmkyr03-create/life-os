@@ -16,6 +16,7 @@ HEADERS = {
     "Content-Type": "application/json",
 }
 
+
 def supabase_request(method, table, params=None, data=None):
     url = f"{SUPABASE_URL}/rest/v1/{table}"
 
@@ -41,6 +42,16 @@ def supabase_request(method, table, params=None, data=None):
     return []
 
 
+def delete_record(table, item_id):
+    return supabase_request(
+        "DELETE",
+        table,
+        params={
+            "id": f"eq.{item_id}",
+        },
+    )
+
+
 # =========================================================
 # WORKOUT MENU
 # =========================================================
@@ -54,13 +65,11 @@ workout_menu = {
         ("サイドレイズ", 6, 15, 3, "2分"),
         ("インクラインダンベルカール", 9, 10, 3, "2分"),
     ],
-
     "Day 2：Lower A": [
         ("シーテッドレッグプレス", None, 8, 5, "3分"),
         ("レッグカール", 40, 15, 4, "2分"),
         ("レッグエクステンション", 40, 15, 4, "2分"),
     ],
-
     "Day 3：Upper B": [
         ("ベンチプレス", 65, 8, 3, "3分"),
         ("懸垂（アシスト）", None, 10, 3, "3分"),
@@ -69,7 +78,6 @@ workout_menu = {
         ("サイドレイズ", 6, 15, 3, "2分"),
         ("ダンベルカール", 10, 12, 3, "2分"),
     ],
-
     "Day 4：Lower B": [
         ("シーテッドレッグプレス", None, 10, 4, "3分"),
         ("レッグカール", 40, 15, 4, "2分"),
@@ -211,6 +219,7 @@ page = st.sidebar.radio(
         "🧠 基礎データ登録",
         "📚 登録データ",
         "💰 お金",
+        "🗑️ データ管理",
     ],
 )
 
@@ -702,6 +711,7 @@ elif page == "💰 お金":
                 "money_records",
                 data={
                     "record_date": str(money_date),
+                    "record_type": money_type,
                     "amount": final_amount,
                     "category": category,
                     "content": content,
@@ -726,7 +736,7 @@ elif page == "💰 お金":
         "GET",
         "money_records",
         params={
-            "select": "record_date,amount,category,content",
+            "select": "id,record_date,record_type,amount,category,content",
             "order": "id.desc",
             "limit": "20",
         },
@@ -743,6 +753,7 @@ elif page == "💰 お金":
         for item in money_data:
 
             record_date = item.get("record_date")
+            record_type = item.get("record_type") or ""
             amount = item.get("amount") or 0
             category = item.get("category")
             content = item.get("content") or ""
@@ -761,7 +772,376 @@ elif page == "💰 お金":
 
             st.write(
                 f"**{record_date}**　"
+                f"{record_type}　"
                 f"{amount_text}　"
                 f"{category}　"
                 f"{content}"
             )
+
+
+# =========================================================
+# DATA MANAGEMENT
+# =========================================================
+
+elif page == "🗑️ データ管理":
+
+    st.header("🗑️ データ管理")
+
+    st.warning(
+        "ここで削除したデータは元に戻せません。"
+    )
+
+    # -----------------------------------------------------
+    # KNOWLEDGE
+    # -----------------------------------------------------
+
+    st.subheader("🧠 基礎データ")
+
+    knowledge_data = supabase_request(
+        "GET",
+        "knowledge",
+        params={
+            "select": "id,category,title,status,created_at",
+            "order": "id.desc",
+            "limit": "50",
+        },
+    )
+
+    if not knowledge_data:
+
+        st.info("基礎データはありません。")
+
+    else:
+
+        for item in knowledge_data:
+
+            item_id = item.get("id")
+
+            label = (
+                f"{item.get('category')}｜"
+                f"{item.get('title')}｜"
+                f"{item.get('status')}"
+            )
+
+            with st.expander(label):
+
+                st.caption(
+                    f"登録：{item.get('created_at')}"
+                )
+
+                confirm_key = f"confirm_knowledge_{item_id}"
+
+                if st.button(
+                    "🗑️ このデータを削除",
+                    key=f"delete_knowledge_{item_id}",
+                ):
+                    st.session_state[confirm_key] = True
+
+                if st.session_state.get(confirm_key, False):
+
+                    st.warning(
+                        "本当に削除しますか？"
+                    )
+
+                    col1, col2 = st.columns(2)
+
+                    with col1:
+
+                        if st.button(
+                            "はい、削除する",
+                            key=f"confirm_delete_knowledge_{item_id}",
+                        ):
+
+                            delete_record(
+                                "knowledge",
+                                item_id,
+                            )
+
+                            st.session_state[confirm_key] = False
+
+                            st.success(
+                                "削除しました。"
+                            )
+
+                            st.rerun()
+
+                    with col2:
+
+                        if st.button(
+                            "キャンセル",
+                            key=f"cancel_delete_knowledge_{item_id}",
+                        ):
+
+                            st.session_state[confirm_key] = False
+
+                            st.rerun()
+
+    st.divider()
+
+    # -----------------------------------------------------
+    # MONEY
+    # -----------------------------------------------------
+
+    st.subheader("💰 お金の記録")
+
+    money_data = supabase_request(
+        "GET",
+        "money_records",
+        params={
+            "select": "id,record_date,record_type,amount,category,content",
+            "order": "id.desc",
+            "limit": "50",
+        },
+    )
+
+    if not money_data:
+
+        st.info("お金の記録はありません。")
+
+    else:
+
+        for item in money_data:
+
+            item_id = item.get("id")
+            record_date = item.get("record_date")
+            record_type = item.get("record_type") or ""
+
+            amount = item.get("amount") or 0
+
+            if amount < 0:
+                amount_text = f"-¥{abs(amount):,.0f}"
+            else:
+                amount_text = f"+¥{amount:,.0f}"
+
+            label = (
+                f"{record_date}｜"
+                f"{record_type}｜"
+                f"{amount_text}｜"
+                f"{item.get('category')}｜"
+                f"{item.get('content') or ''}"
+            )
+
+            with st.expander(label):
+
+                confirm_key = f"confirm_money_{item_id}"
+
+                if st.button(
+                    "🗑️ この記録を削除",
+                    key=f"delete_money_{item_id}",
+                ):
+                    st.session_state[confirm_key] = True
+
+                if st.session_state.get(confirm_key, False):
+
+                    st.warning(
+                        "本当に削除しますか？"
+                    )
+
+                    col1, col2 = st.columns(2)
+
+                    with col1:
+
+                        if st.button(
+                            "はい、削除する",
+                            key=f"confirm_delete_money_{item_id}",
+                        ):
+
+                            delete_record(
+                                "money_records",
+                                item_id,
+                            )
+
+                            st.session_state[confirm_key] = False
+
+                            st.success(
+                                "削除しました。"
+                            )
+
+                            st.rerun()
+
+                    with col2:
+
+                        if st.button(
+                            "キャンセル",
+                            key=f"cancel_delete_money_{item_id}",
+                        ):
+
+                            st.session_state[confirm_key] = False
+
+                            st.rerun()
+
+    st.divider()
+
+    # -----------------------------------------------------
+    # WORKOUT
+    # -----------------------------------------------------
+
+    st.subheader("🏋️ 筋トレ記録")
+
+    workout_data = supabase_request(
+        "GET",
+        "workout_history",
+        params={
+            "select": "id,workout_date,day_name,exercise_name,weight,reps,sets,impression",
+            "order": "id.desc",
+            "limit": "50",
+        },
+    )
+
+    if not workout_data:
+
+        st.info("筋トレ記録はありません。")
+
+    else:
+
+        for item in workout_data:
+
+            item_id = item.get("id")
+
+            label = (
+                f"{item.get('workout_date')}｜"
+                f"{item.get('day_name')}｜"
+                f"{item.get('exercise_name')}｜"
+                f"{item.get('weight')}kg｜"
+                f"{item.get('reps')}回｜"
+                f"{item.get('sets')}セット"
+            )
+
+            with st.expander(label):
+
+                st.write(
+                    item.get("impression") or ""
+                )
+
+                confirm_key = f"confirm_workout_{item_id}"
+
+                if st.button(
+                    "🗑️ この記録を削除",
+                    key=f"delete_workout_{item_id}",
+                ):
+                    st.session_state[confirm_key] = True
+
+                if st.session_state.get(confirm_key, False):
+
+                    st.warning(
+                        "本当に削除しますか？"
+                    )
+
+                    col1, col2 = st.columns(2)
+
+                    with col1:
+
+                        if st.button(
+                            "はい、削除する",
+                            key=f"confirm_delete_workout_{item_id}",
+                        ):
+
+                            delete_record(
+                                "workout_history",
+                                item_id,
+                            )
+
+                            st.session_state[confirm_key] = False
+
+                            st.success(
+                                "削除しました。"
+                            )
+
+                            st.rerun()
+
+                    with col2:
+
+                        if st.button(
+                            "キャンセル",
+                            key=f"cancel_delete_workout_{item_id}",
+                        ):
+
+                            st.session_state[confirm_key] = False
+
+                            st.rerun()
+
+    st.divider()
+
+    # -----------------------------------------------------
+    # DAILY RECORDS
+    # -----------------------------------------------------
+
+    st.subheader("📝 日々の記録")
+
+    records_data = supabase_request(
+        "GET",
+        "records",
+        params={
+            "select": "id,record_date,content,created_at",
+            "order": "id.desc",
+            "limit": "50",
+        },
+    )
+
+    if not records_data:
+
+        st.info("日々の記録はありません。")
+
+    else:
+
+        for item in records_data:
+
+            item_id = item.get("id")
+
+            label = (
+                f"{item.get('record_date')}｜"
+                f"{item.get('content') or ''}"
+            )
+
+            with st.expander(label):
+
+                st.caption(
+                    f"登録：{item.get('created_at')}"
+                )
+
+                confirm_key = f"confirm_record_{item_id}"
+
+                if st.button(
+                    "🗑️ この記録を削除",
+                    key=f"delete_record_{item_id}",
+                ):
+                    st.session_state[confirm_key] = True
+
+                if st.session_state.get(confirm_key, False):
+
+                    st.warning(
+                        "本当に削除しますか？"
+                    )
+
+                    col1, col2 = st.columns(2)
+
+                    with col1:
+
+                        if st.button(
+                            "はい、削除する",
+                            key=f"confirm_delete_record_{item_id}",
+                        ):
+
+                            delete_record(
+                                "records",
+                                item_id,
+                            )
+
+                            st.session_state[confirm_key] = False
+
+                            st.success(
+                                "削除しました。"
+                            )
+
+                            st.rerun()
+
+                    with col2:
+
+                        if st.button(
+                            "キャンセル",
+                            key=f"cancel_delete_record_{item_id}",
+                        ):
+
+                            st.session_state[confirm_key] = False
+
+                            st.rerun()
