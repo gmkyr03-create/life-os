@@ -4,3 +4,4 @@ app_backup.py
 lifeos.log
 lifeos_error.log
 __pycache__/
+.streamlit/

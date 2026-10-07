@@ -1,69 +1,44 @@
 import streamlit as st
-import sqlite3
+import requests
 import re
 from datetime import date, datetime
 
-DB = "life_os.db"
-
-conn = sqlite3.connect(DB, check_same_thread=False)
-cur = conn.cursor()
-
-
 # =========================================================
-# DATABASE
+# SUPABASE
 # =========================================================
 
-cur.execute("""
-CREATE TABLE IF NOT EXISTS records (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    created_at TEXT,
-    category TEXT,
-    content TEXT
-)
-""")
+SUPABASE_URL = st.secrets["SUPABASE_URL"]
+SUPABASE_KEY = st.secrets["SUPABASE_SECRET_KEY"]
 
-cur.execute("""
-CREATE TABLE IF NOT EXISTS knowledge (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    category TEXT,
-    title TEXT,
-    content TEXT,
-    status TEXT,
-    created_at TEXT
-)
-""")
+HEADERS = {
+    "apikey": SUPABASE_KEY,
+    "Authorization": f"Bearer {SUPABASE_KEY}",
+    "Content-Type": "application/json",
+}
 
-# 既存knowledgeテーブルにstatusがない場合への対応
-try:
-    cur.execute("ALTER TABLE knowledge ADD COLUMN status TEXT DEFAULT '継続中'")
-except sqlite3.OperationalError:
-    pass
+def supabase_request(method, table, params=None, data=None):
+    url = f"{SUPABASE_URL}/rest/v1/{table}"
 
-cur.execute("""
-CREATE TABLE IF NOT EXISTS workout_history (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    workout_date TEXT,
-    day_name TEXT,
-    exercise_name TEXT,
-    weight REAL,
-    reps INTEGER,
-    sets INTEGER,
-    impression TEXT
-)
-""")
+    response = requests.request(
+        method,
+        url,
+        headers=HEADERS,
+        params=params,
+        json=data,
+        timeout=20,
+    )
 
-cur.execute("""
-CREATE TABLE IF NOT EXISTS money_records (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    record_date TEXT,
-    amount REAL,
-    category TEXT,
-    content TEXT,
-    created_at TEXT
-)
-""")
+    if not response.ok:
+        st.error(
+            f"データベースエラー：{response.status_code}\n\n"
+            f"{response.text}"
+        )
+        return []
 
-conn.commit()
+    if response.text:
+        return response.json()
+
+    return []
 
 
 # =========================================================
@@ -71,7 +46,6 @@ conn.commit()
 # =========================================================
 
 workout_menu = {
-
     "Day 1：Upper A": [
         ("ベンチプレス", 67.5, 5, 4, "3分"),
         ("シーテッドロウ", 50, 10, 3, "3分"),
@@ -109,17 +83,30 @@ workout_menu = {
 # =========================================================
 
 def get_last_workout(exercise_name, day_name):
+    data = supabase_request(
+        "GET",
+        "workout_history",
+        params={
+            "select": "workout_date,weight,reps,sets,impression",
+            "exercise_name": f"eq.{exercise_name}",
+            "day_name": f"eq.{day_name}",
+            "order": "id.desc",
+            "limit": "1",
+        },
+    )
 
-    cur.execute("""
-        SELECT workout_date, weight, reps, sets, impression
-        FROM workout_history
-        WHERE exercise_name = ?
-        AND day_name = ?
-        ORDER BY id DESC
-        LIMIT 1
-    """, (exercise_name, day_name))
+    if data:
+        row = data[0]
 
-    return cur.fetchone()
+        return (
+            row.get("workout_date"),
+            row.get("weight"),
+            row.get("reps"),
+            row.get("sets"),
+            row.get("impression"),
+        )
+
+    return None
 
 
 def save_workout(
@@ -129,67 +116,55 @@ def save_workout(
     weight,
     reps,
     sets,
-    impression
+    impression,
 ):
-
-    cur.execute("""
-        INSERT INTO workout_history
-        (
-            workout_date,
-            day_name,
-            exercise_name,
-            weight,
-            reps,
-            sets,
-            impression
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-    """, (
-        str(workout_date),
-        day_name,
-        exercise_name,
-        weight,
-        reps,
-        sets,
-        impression
-    ))
-
-    conn.commit()
+    supabase_request(
+        "POST",
+        "workout_history",
+        data={
+            "workout_date": str(workout_date),
+            "day_name": day_name,
+            "exercise_name": exercise_name,
+            "weight": weight,
+            "reps": reps,
+            "sets": sets,
+            "impression": impression,
+        },
+    )
 
 
 def parse_workout_text(
     text,
     default_weight,
     default_reps,
-    default_sets
+    default_sets,
 ):
-
     weight = default_weight
     reps = default_reps
     sets = default_sets
 
     weight_match = re.search(
-        r'(\d+(?:\.\d+)?)\s*(?:kg|キロ)',
+        r"(\d+(?:\.\d+)?)\s*(?:kg|キロ)",
         text,
-        re.IGNORECASE
+        re.IGNORECASE,
     )
 
     if weight_match:
         weight = float(weight_match.group(1))
 
     reps_match = re.search(
-        r'(\d+)\s*(?:回|rep|reps)',
+        r"(\d+)\s*(?:回|rep|reps)",
         text,
-        re.IGNORECASE
+        re.IGNORECASE,
     )
 
     if reps_match:
         reps = int(reps_match.group(1))
 
     sets_match = re.search(
-        r'(\d+)\s*(?:セット|set|sets)',
+        r"(\d+)\s*(?:セット|set|sets)",
         text,
-        re.IGNORECASE
+        re.IGNORECASE,
     )
 
     if sets_match:
@@ -199,26 +174,16 @@ def parse_workout_text(
 
 
 def save_knowledge(category, title, content, status):
-
-    cur.execute("""
-        INSERT INTO knowledge
-        (
-            category,
-            title,
-            content,
-            status,
-            created_at
-        )
-        VALUES (?, ?, ?, ?, ?)
-    """, (
-        category,
-        title,
-        content,
-        status,
-        datetime.now().isoformat()
-    ))
-
-    conn.commit()
+    supabase_request(
+        "POST",
+        "knowledge",
+        data={
+            "category": category,
+            "title": title,
+            "content": content,
+            "status": status,
+        },
+    )
 
 
 # =========================================================
@@ -228,7 +193,7 @@ def save_knowledge(category, title, content, status):
 st.set_page_config(
     page_title="LIFE OS",
     page_icon="🧠",
-    layout="wide"
+    layout="wide",
 )
 
 st.title("🧠 LIFE OS")
@@ -245,8 +210,8 @@ page = st.sidebar.radio(
         "🏋️ 今日の筋トレ",
         "🧠 基礎データ登録",
         "📚 登録データ",
-        "💰 お金"
-    ]
+        "💰 お金",
+    ],
 )
 
 
@@ -262,40 +227,62 @@ if page == "🏠 ダッシュボード":
         "記録 → 蓄積 → 分析 → 判断 → 行動促進"
     )
 
-    cur.execute("SELECT COUNT(*) FROM records")
-    record_count = cur.fetchone()[0]
+    records = supabase_request(
+        "GET",
+        "records",
+        params={
+            "select": "id",
+        },
+    )
 
-    cur.execute("SELECT COUNT(*) FROM knowledge")
-    knowledge_count = cur.fetchone()[0]
+    knowledge = supabase_request(
+        "GET",
+        "knowledge",
+        params={
+            "select": "id",
+        },
+    )
 
-    cur.execute("SELECT COUNT(*) FROM workout_history")
-    workout_count = cur.fetchone()[0]
+    workouts = supabase_request(
+        "GET",
+        "workout_history",
+        params={
+            "select": "id",
+        },
+    )
 
-    cur.execute("SELECT COUNT(*) FROM money_records")
-    money_count = cur.fetchone()[0]
+    money = supabase_request(
+        "GET",
+        "money_records",
+        params={
+            "select": "id",
+        },
+    )
 
     col1, col2, col3, col4 = st.columns(4)
 
     with col1:
-        st.metric("日々の記録", record_count)
+        st.metric("日々の記録", len(records))
 
     with col2:
-        st.metric("基礎データ", knowledge_count)
+        st.metric("基礎データ", len(knowledge))
 
     with col3:
-        st.metric("筋トレ記録", workout_count)
+        st.metric("筋トレ記録", len(workouts))
 
     with col4:
-        st.metric("お金の記録", money_count)
+        st.metric("お金の記録", len(money))
 
     st.divider()
 
     st.subheader("現在のLIFE OS")
 
-    st.write("""
-    あなたの生活に関する情報を蓄積し、
-    将来的にAIによる分析・判断・行動促進につなげます。
-    """)
+    st.write(
+        """
+        あなたの生活に関する情報を蓄積し、
+        将来的にAIによる分析・判断・行動促進につなげます。
+        """
+    )
 
 
 # =========================================================
@@ -308,12 +295,12 @@ elif page == "🏋️ 今日の筋トレ":
 
     workout_date = st.date_input(
         "日付",
-        value=date.today()
+        value=date.today(),
     )
 
     day_name = st.selectbox(
         "今日のDay",
-        list(workout_menu.keys())
+        list(workout_menu.keys()),
     )
 
     st.divider()
@@ -323,14 +310,22 @@ elif page == "🏋️ 今日の筋トレ":
         "実際にやった内容・感想だけ入力してください。"
     )
 
-    for exercise_name, target_weight, target_reps, target_sets, rest in workout_menu[day_name]:
+    for (
+        exercise_name,
+        target_weight,
+        target_reps,
+        target_sets,
+        rest,
+    ) in workout_menu[day_name]:
 
         st.markdown(f"### {exercise_name}")
 
         if target_weight is None:
             target_weight_text = "重量：未設定"
+
         elif exercise_name == "インクラインプレス(マシン)":
             target_weight_text = f"片側 {target_weight}kg"
+
         else:
             target_weight_text = f"{target_weight}kg"
 
@@ -343,7 +338,7 @@ elif page == "🏋️ 今日の筋トレ":
 
         previous = get_last_workout(
             exercise_name,
-            day_name
+            day_name,
         )
 
         if previous:
@@ -372,12 +367,12 @@ elif page == "🏋️ 今日の筋トレ":
                 "最後かなりきつかったけどフォームは安定。"
                 "次回は70kgいけそう。"
             ),
-            key=f"impression_{day_name}_{exercise_name}"
+            key=f"impression_{day_name}_{exercise_name}",
         )
 
         if st.button(
             "💾 記録",
-            key=f"save_{day_name}_{exercise_name}"
+            key=f"save_{day_name}_{exercise_name}",
         ):
 
             if not impression.strip():
@@ -388,11 +383,15 @@ elif page == "🏋️ 今日の筋トレ":
 
             else:
 
-                actual_weight, actual_reps, actual_sets = parse_workout_text(
+                (
+                    actual_weight,
+                    actual_reps,
+                    actual_sets,
+                ) = parse_workout_text(
                     impression,
                     target_weight,
                     target_reps,
-                    target_sets
+                    target_sets,
                 )
 
                 save_workout(
@@ -402,7 +401,7 @@ elif page == "🏋️ 今日の筋トレ":
                     actual_weight,
                     actual_reps,
                     actual_sets,
-                    impression
+                    impression,
                 )
 
                 st.success(
@@ -428,13 +427,9 @@ elif page == "🧠 基礎データ登録":
         "登録方法",
         [
             "📝 一括登録",
-            "➕ 1件ずつ登録"
-        ]
+            "➕ 1件ずつ登録",
+        ],
     )
-
-    # -----------------------------------------------------
-    # BULK
-    # -----------------------------------------------------
 
     if mode == "📝 一括登録":
 
@@ -449,9 +444,9 @@ elif page == "🧠 基礎データ登録":
                 "お金",
                 "生活",
                 "目標",
-                "その他"
+                "その他",
             ],
-            key="bulk_category"
+            key="bulk_category",
         )
 
         status = st.selectbox(
@@ -463,14 +458,14 @@ elif page == "🧠 基礎データ登録":
                 "条件が整ったらやる",
                 "いつかやりたい",
                 "完了",
-                "やめた"
+                "やめた",
             ],
-            key="bulk_status"
+            key="bulk_status",
         )
 
         title = st.text_input(
             "タイトル",
-            placeholder="例：現在の美容計画"
+            placeholder="例：現在の美容計画",
         )
 
         bulk_content = st.text_area(
@@ -482,25 +477,30 @@ elif page == "🧠 基礎データ登録":
 例：
 
 最終目標：
+
 〜〜〜
 
 現在：
+
 〜〜〜
 
 今後やりたいこと：
+
 〜〜〜
 
 優先順位：
+
 〜〜〜
 
 注意点：
+
 〜〜〜
-"""
+""",
         )
 
         if st.button(
             "🚀 このデータを一括登録",
-            type="primary"
+            type="primary",
         ):
 
             if title.strip() and bulk_content.strip():
@@ -509,7 +509,7 @@ elif page == "🧠 基礎データ登録":
                     category,
                     title,
                     bulk_content,
-                    status
+                    status,
                 )
 
                 st.success(
@@ -521,10 +521,6 @@ elif page == "🧠 基礎データ登録":
                 st.warning(
                     "タイトルと内容を入力してください。"
                 )
-
-    # -----------------------------------------------------
-    # SINGLE
-    # -----------------------------------------------------
 
     else:
 
@@ -539,9 +535,9 @@ elif page == "🧠 基礎データ登録":
                 "お金",
                 "生活",
                 "目標",
-                "その他"
+                "その他",
             ],
-            key="single_category"
+            key="single_category",
         )
 
         status = st.selectbox(
@@ -553,25 +549,25 @@ elif page == "🧠 基礎データ登録":
                 "条件が整ったらやる",
                 "いつかやりたい",
                 "完了",
-                "やめた"
+                "やめた",
             ],
-            key="single_status"
+            key="single_status",
         )
 
         title = st.text_input(
             "タイトル",
-            key="single_title"
+            key="single_title",
         )
 
         content = st.text_area(
             "内容",
             height=250,
-            key="single_content"
+            key="single_content",
         )
 
         if st.button(
             "登録する",
-            key="single_save"
+            key="single_save",
         ):
 
             if title.strip() and content.strip():
@@ -580,7 +576,7 @@ elif page == "🧠 基礎データ登録":
                     category,
                     title,
                     content,
-                    status
+                    status,
                 )
 
                 st.success(
@@ -602,19 +598,14 @@ elif page == "📚 登録データ":
 
     st.header("📚 登録データ")
 
-    cur.execute("""
-        SELECT
-            id,
-            category,
-            title,
-            content,
-            status,
-            created_at
-        FROM knowledge
-        ORDER BY id DESC
-    """)
-
-    data = cur.fetchall()
+    data = supabase_request(
+        "GET",
+        "knowledge",
+        params={
+            "select": "id,category,title,content,status,created_at",
+            "order": "id.desc",
+        },
+    )
 
     if not data:
 
@@ -624,14 +615,14 @@ elif page == "📚 登録データ":
 
     else:
 
-        for (
-            item_id,
-            category,
-            title,
-            content,
-            status,
-            created_at
-        ) in data:
+        for item in data:
+
+            item_id = item.get("id")
+            category = item.get("category")
+            title = item.get("title")
+            content = item.get("content")
+            status = item.get("status")
+            created_at = item.get("created_at")
 
             with st.expander(
                 f"{category}｜{title}｜{status}"
@@ -659,21 +650,21 @@ elif page == "💰 お金":
     money_date = st.date_input(
         "日付",
         value=date.today(),
-        key="money_date"
+        key="money_date",
     )
 
     money_type = st.selectbox(
         "種類",
         [
             "支出",
-            "収入"
-        ]
+            "収入",
+        ],
     )
 
     amount = st.number_input(
         "金額",
         min_value=0,
-        step=100
+        step=100,
     )
 
     category = st.selectbox(
@@ -686,13 +677,13 @@ elif page == "💰 お金":
             "筋トレ",
             "固定費",
             "買い物",
-            "その他"
-        ]
+            "その他",
+        ],
     )
 
     content = st.text_input(
         "内容",
-        placeholder="例：昼食、ジム用品、仕事用教材など"
+        placeholder="例：昼食、ジム用品、仕事用教材など",
     )
 
     if st.button(
@@ -706,25 +697,16 @@ elif page == "💰 お金":
             if money_type == "支出":
                 final_amount = -amount
 
-            cur.execute("""
-                INSERT INTO money_records
-                (
-                    record_date,
-                    amount,
-                    category,
-                    content,
-                    created_at
-                )
-                VALUES (?, ?, ?, ?, ?)
-            """, (
-                str(money_date),
-                final_amount,
-                category,
-                content,
-                datetime.now().isoformat()
-            ))
-
-            conn.commit()
+            supabase_request(
+                "POST",
+                "money_records",
+                data={
+                    "record_date": str(money_date),
+                    "amount": final_amount,
+                    "category": category,
+                    "content": content,
+                },
+            )
 
             st.success(
                 "記録しました！"
@@ -740,18 +722,15 @@ elif page == "💰 お金":
 
     st.subheader("最近のお金の記録")
 
-    cur.execute("""
-        SELECT
-            record_date,
-            amount,
-            category,
-            content
-        FROM money_records
-        ORDER BY id DESC
-        LIMIT 20
-    """)
-
-    money_data = cur.fetchall()
+    money_data = supabase_request(
+        "GET",
+        "money_records",
+        params={
+            "select": "record_date,amount,category,content",
+            "order": "id.desc",
+            "limit": "20",
+        },
+    )
 
     if not money_data:
 
@@ -761,12 +740,12 @@ elif page == "💰 お金":
 
     else:
 
-        for (
-            record_date,
-            amount,
-            category,
-            content
-        ) in money_data:
+        for item in money_data:
+
+            record_date = item.get("record_date")
+            amount = item.get("amount") or 0
+            category = item.get("category")
+            content = item.get("content") or ""
 
             if amount < 0:
 
